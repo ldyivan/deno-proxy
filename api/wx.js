@@ -144,52 +144,20 @@ module.exports = async (req, res) => {
   }
   
   // POST：接收用户消息
-  if (req.method === 'POST') {
-    try {
-      // 1. 获取原始请求体（解决 Buffer 问题）
-      const rawBody = getRequestBody(req);
-      console.log(`[消息] 原始长度: ${rawBody.length}, 前200字符: ${rawBody.substring(0, 200)}`);
-      
-      // 2. 解析 XML
-      const { fromUser, toUser, content, msgType } = parseXML(rawBody);
-      console.log(`[消息] 解析结果: from=${fromUser}, msgType=${msgType}, content=${content}`);
-      
-      // 3. 非文本消息直接忽略
-      if (msgType !== 'text') {
-        console.log('[消息] 非文本消息，忽略');
-        return res.status(200).send('success');
-      }
-      
-      // 4. 提取抖音链接
-      const douyinUrl = extractDouyinLink(content);
-      let replyText = '';
-      
-      if (!douyinUrl) {
-        replyText = '请发送抖音分享链接，例如：https://v.douyin.com/xxxxx/';
-        console.log('[回复] 未检测到链接');
-      } else {
-        console.log(`[链接] 提取到: ${douyinUrl}`);
-        try {
-          const parsed = await parseDouyinLink(douyinUrl);
-          replyText = formatReply(parsed);
-          console.log('[回复] 解析成功，回复长度:', replyText.length);
-        } catch (err) {
-          console.error('[API] 调用失败:', err);
-          replyText = `解析失败：${err.message}\n请检查链接是否正确或稍后再试。`;
-        }
-      }
-      
-      // 5. 构造并返回 XML
-      const replyXml = buildReplyXML(fromUser, toUser, replyText);
-      res.setHeader('Content-Type', 'application/xml');
-      return res.status(200).send(replyXml);
-      
-    } catch (err) {
-      console.error('[异常] 全局捕获:', err);
-      // 必须返回 success，否则微信会重试
-      return res.status(200).send('success');
-    }
+  // POST：接收用户消息（临时调试版）
+if (req.method === 'POST') {
+  try {
+    const rawBody = getRequestBody(req);
+    // 构造回复：直接把原始 XML 的前 1000 个字符发回给用户
+    const replyText = `收到原始消息（前1000字符）：\n\n${rawBody.substring(0, 1000)}`;
+    const replyXml = buildReplyXML(fromUser, toUser, replyText);
+    res.setHeader('Content-Type', 'application/xml');
+    return res.status(200).send(replyXml);
+  } catch (err) {
+    console.error('[调试异常]', err);
+    return res.status(200).send('success');
   }
+}
   
   // 其他方法
   return res.status(405).send('Method Not Allowed');
