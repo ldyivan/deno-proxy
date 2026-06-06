@@ -2,7 +2,7 @@ const crypto = require('crypto');
 
 const TOKEN = process.env.WX_TOKEN;
 const API_URL = 'http://api.hzv5.cn/dysp.php';
-const MAX_BYTES = 2000;        // 微信文本消息建议不超过 2048，留 48 字节安全余量
+const MAX_BYTES = 2000;
 
 function getRawBodyFromReq(req) {
   return new Promise((resolve, reject) => {
@@ -28,7 +28,6 @@ function extractTag(xml, tag) {
   return match ? match[1].trim() : '';
 }
 
-// 支持短横线的抖音链接正则
 function extractDouyinLink(text) {
   if (!text) return null;
   const regex = /https?:\/\/(v\.douyin\.com|iesdouyin\.com)\/[a-zA-Z0-9_-]+\/?/;
@@ -58,7 +57,6 @@ function shortenTitle(title, maxLen = 15) {
   return title.substring(0, maxLen) + '…';
 }
 
-// 生成基础头部（作者、标题、点赞）
 function buildHeader(data) {
   const author = data.author || '未知';
   const title = shortenTitle(data.title);
@@ -66,7 +64,6 @@ function buildHeader(data) {
   return `${author} | ${title} | ❤️${like}`;
 }
 
-// 生成完整回复文本，支持动态减少图片数量
 function buildFullReply(data) {
   const type = data.type;
   const header = buildHeader(data);
@@ -82,12 +79,10 @@ function buildFullReply(data) {
     return lines.join('\n');
   }
 
-  // 图文集
   const allUrls = extractImageUrls(data.url);
   const totalNum = data.num || allUrls.length;
   lines.push(`📷 共${totalNum}张图`);
 
-  // 尝试加入所有图片，若超长则逐步减少
   let currentUrls = [...allUrls];
   let replyText = '';
 
@@ -99,13 +94,10 @@ function buildFullReply(data) {
     const testText = testLines.join('\n');
     const byteLength = Buffer.byteLength(testText, 'utf8');
     if (byteLength <= MAX_BYTES) {
-      // 符合要求，使用这个版本
       replyText = testText;
       break;
     } else {
-      // 移除最后一张图（如果只剩一张图还超长，则强制保留一张）
       if (currentUrls.length === 1) {
-        // 保留一张，即使超长也认了（一般不会超）
         replyText = testText;
         break;
       }
@@ -113,7 +105,6 @@ function buildFullReply(data) {
     }
   }
 
-  // 如果因数量减少而未显示全部，添加说明
   if (replyText && currentUrls.length < allUrls.length) {
     replyText += `\n(仅显示前${currentUrls.length}张，共${totalNum}张)`;
   }
@@ -153,23 +144,22 @@ module.exports = async (req, res) => {
       }
 
       const douyinUrl = extractDouyinLink(content);
-      let replyText = '';
-
+      // 如果没有抖音链接，直接返回 success，不回复任何消息
       if (!douyinUrl) {
-        replyText = '请发送抖音分享链接，例如：https://v.douyin.com/xxxxx/';
-      } else {
-        try {
-          const parsed = await parseDouyin(douyinUrl);
-          replyText = buildFullReply(parsed);
-        } catch (err) {
-          console.error('API错误:', err);
-          replyText = `解析失败：${err.message}`;
-        }
+        return res.status(200).send('success');
       }
 
-      const replyXml = buildReply(fromUser, toUser, replyText);
-      res.setHeader('Content-Type', 'application/xml');
-      return res.status(200).send(replyXml);
+      try {
+        const parsed = await parseDouyin(douyinUrl);
+        const replyText = buildFullReply(parsed);
+        const replyXml = buildReply(fromUser, toUser, replyText);
+        res.setHeader('Content-Type', 'application/xml');
+        return res.status(200).send(replyXml);
+      } catch (err) {
+        console.error('API错误:', err);
+        // 解析失败也返回 success，不回复错误提示（可根据需要保留或删除）
+        return res.status(200).send('success');
+      }
     } catch (err) {
       console.error('严重错误:', err);
       return res.status(200).send('success');
