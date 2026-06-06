@@ -4,6 +4,7 @@ const TOKEN = process.env.WX_TOKEN;
 const API_URL = 'http://api.hzv5.cn/dysp.php';
 const MAX_BYTES = 2000;
 
+// 读取请求体（流）
 function getRawBodyFromReq(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -13,12 +14,14 @@ function getRawBodyFromReq(req) {
   });
 }
 
+// 微信签名验证
 function checkSignature(signature, timestamp, nonce) {
   const arr = [TOKEN, timestamp, nonce].sort();
   const sha1 = crypto.createHash('sha1').update(arr.join('')).digest('hex');
   return sha1 === signature;
 }
 
+// 从 XML 中提取标签内容（支持 CDATA）
 function extractTag(xml, tag) {
   const cdataRegex = new RegExp(`<${tag}><\\!\\[CDATA\\[([\\s\\S]*?)\\]\\]></${tag}>`);
   let match = xml.match(cdataRegex);
@@ -28,6 +31,7 @@ function extractTag(xml, tag) {
   return match ? match[1].trim() : '';
 }
 
+// 提取抖音链接（支持短横线）
 function extractDouyinLink(text) {
   if (!text) return null;
   const regex = /https?:\/\/(v\.douyin\.com|iesdouyin\.com)\/[a-zA-Z0-9_-]+\/?/;
@@ -35,6 +39,7 @@ function extractDouyinLink(text) {
   return match ? match[0] : null;
 }
 
+// 调用抖音解析 API
 async function parseDouyin(shareUrl) {
   const url = `${API_URL}?url=${encodeURIComponent(shareUrl)}`;
   const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
@@ -44,6 +49,7 @@ async function parseDouyin(shareUrl) {
   return data.data;
 }
 
+// 提取图片链接（兼容对象/数组）
 function extractImageUrls(urlField) {
   if (!urlField) return [];
   if (Array.isArray(urlField)) return urlField;
@@ -51,12 +57,14 @@ function extractImageUrls(urlField) {
   return [urlField];
 }
 
+// 缩短标题
 function shortenTitle(title, maxLen = 15) {
   if (!title) return '无标题';
   if (title.length <= maxLen) return title;
   return title.substring(0, maxLen) + '…';
 }
 
+// 构建头部（作者 | 标题 | 点赞）
 function buildHeader(data) {
   const author = data.author || '未知';
   const title = shortenTitle(data.title);
@@ -64,6 +72,7 @@ function buildHeader(data) {
   return `${author} | ${title} | ❤️${like}`;
 }
 
+// 智能控制长度的图文集回复
 function buildFullReply(data) {
   const type = data.type;
   const header = buildHeader(data);
@@ -108,10 +117,10 @@ function buildFullReply(data) {
   if (replyText && currentUrls.length < allUrls.length) {
     replyText += `\n(仅显示前${currentUrls.length}张，共${totalNum}张)`;
   }
-
   return replyText || (lines.join('\n') + '\n(无法生成回复)');
 }
 
+// 构建回复 XML
 function buildReply(toUser, fromUser, content) {
   const timestamp = Math.floor(Date.now() / 1000);
   return `<xml>
@@ -124,6 +133,7 @@ function buildReply(toUser, fromUser, content) {
 }
 
 module.exports = async (req, res) => {
+  // GET: 微信服务器验证
   if (req.method === 'GET') {
     const { signature, timestamp, nonce, echostr } = req.query;
     if (checkSignature(signature, timestamp, nonce)) {
@@ -137,15 +147,42 @@ module.exports = async (req, res) => {
       const rawXml = await getRawBodyFromReq(req);
       const fromUser = extractTag(rawXml, 'FromUserName');
       const toUser = extractTag(rawXml, 'ToUserName');
-      const content = extractTag(rawXml, 'Content');
+      const msgType = extractTag(rawXml, 'MsgType');
 
+      // ---------- 处理事件消息（菜单点击、关注等）----------
+      if (msgType === 'event') {
+        const event = extractTag(rawXml, 'Event');
+        if (event === 'CLICK') {
+          const eventKey = extractTag(rawXml, 'EventKey');
+          let replyContent = '';
+          if (eventKey === 'help_usage') {
+            replyContent = '欢迎使用抖音解析助手。\n发送抖音分享链接，我将为您解析视频或图文内容。';
+          } else if (eventKey === 'help_about') {
+            replyContent = '本服务由 api.hzv5.cn 提供抖音解析接口。';
+          } else {
+            replyContent = '未知指令，请点击菜单中的“帮助”。';
+          }
+          const replyXml = buildReply(fromUser, toUser, replyContent);
+          res.setHeader('Content-Type', 'application/xml');
+          return res.status(200).send(replyXml);
+        }
+        // 其他事件（subscribe, unsubscribe 等）忽略，不回复
+        return res.status(200).send('success');
+      }
+
+      // ---------- 处理文本消息 ----------
+      if (msgType !== 'text') {
+        return res.status(200).send('success');
+      }
+
+      const content = extractTag(rawXml, 'Content');
       if (!content) {
         return res.status(200).send('success');
       }
 
       const douyinUrl = extractDouyinLink(content);
-      // 如果没有抖音链接，直接返回 success，不回复任何消息
       if (!douyinUrl) {
+        // 没有抖音链接，不回复任何内容
         return res.status(200).send('success');
       }
 
@@ -156,8 +193,8 @@ module.exports = async (req, res) => {
         res.setHeader('Content-Type', 'application/xml');
         return res.status(200).send(replyXml);
       } catch (err) {
-        console.error('API错误:', err);
-        // 解析失败也返回 success，不回复错误提示（可根据需要保留或删除）
+        console.error('API解析错误:', err);
+        // 解析失败也静默处理，不回复错误提示
         return res.status(200).send('success');
       }
     } catch (err) {
