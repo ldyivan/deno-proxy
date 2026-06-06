@@ -1,10 +1,9 @@
-// api/wx.js - 最终稳定版
+// api/wx.js - 调试增强版（无文本内容时返回原始XML片段）
 const crypto = require('crypto');
 
 const TOKEN = process.env.WX_TOKEN;
 const API_URL = 'http://api.hzv5.cn/dysp.php';
 
-// ========== 工具函数 ==========
 function checkSignature(signature, timestamp, nonce) {
   const arr = [TOKEN, timestamp, nonce].sort();
   const sha1 = crypto.createHash('sha1').update(arr.join('')).digest('hex');
@@ -17,9 +16,7 @@ function getRawBody(req) {
   return '';
 }
 
-// 从 XML 中提取指定标签的内容（支持 CDATA）
 function extractFromXML(xml, tag) {
-  // 匹配 <tag><![CDATA[内容]]></tag> 或 <tag>内容</tag>
   const cdataPattern = new RegExp(`<${tag}>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*</${tag}>`);
   let match = xml.match(cdataPattern);
   if (match) return match[1];
@@ -28,7 +25,6 @@ function extractFromXML(xml, tag) {
   return match ? match[1].trim() : '';
 }
 
-// 提取抖音链接
 function extractDouyinLink(text) {
   if (!text) return null;
   const regex = /https?:\/\/(v\.douyin\.com|iesdouyin\.com)\/[a-zA-Z0-9_]+\/?/;
@@ -36,7 +32,6 @@ function extractDouyinLink(text) {
   return match ? match[0] : null;
 }
 
-// 调用解析 API
 async function parseDouyin(shareUrl) {
   const url = `${API_URL}?url=${encodeURIComponent(shareUrl)}`;
   const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
@@ -46,7 +41,6 @@ async function parseDouyin(shareUrl) {
   return data.data;
 }
 
-// 格式化回复
 function formatResult(data) {
   const type = data.type;
   const author = data.author || '未知';
@@ -69,7 +63,6 @@ function formatResult(data) {
   return reply;
 }
 
-// 构建回复 XML
 function buildReply(toUser, fromUser, content) {
   const timestamp = Math.floor(Date.now() / 1000);
   return `<xml>
@@ -81,9 +74,7 @@ function buildReply(toUser, fromUser, content) {
 </xml>`;
 }
 
-// ========== 主函数 ==========
 module.exports = async (req, res) => {
-  // GET 验证
   if (req.method === 'GET') {
     const { signature, timestamp, nonce, echostr } = req.query;
     if (checkSignature(signature, timestamp, nonce)) {
@@ -92,30 +83,28 @@ module.exports = async (req, res) => {
     return res.status(401).send('Invalid signature');
   }
 
-  // POST 处理
   if (req.method === 'POST') {
     try {
       const rawXml = getRawBody(req);
-      console.log('原始XML长度:', rawXml.length);
-
-      // 提取关键信息
       const fromUser = extractFromXML(rawXml, 'FromUserName');
       const toUser = extractFromXML(rawXml, 'ToUserName');
       const content = extractFromXML(rawXml, 'Content');
       const msgType = extractFromXML(rawXml, 'MsgType');
 
-      console.log(`提取结果: from=${fromUser}, to=${toUser}, msgType=${msgType}, content=${content}`);
+      console.log(`[调试] from=${fromUser}, msgType=${msgType}, content长度=${content ? content.length : 0}`);
 
-      // 如果没有 content（比如事件消息），直接忽略
+      // 如果没有提取到内容，则回复原始 XML 的前 500 个字符（调试用）
       if (!content) {
-        console.log('无文本内容，忽略');
-        return res.status(200).send('success');
+        const snippet = rawXml.substring(0, 500);
+        const debugReply = `【调试】未提取到文本内容。原始XML前500字符：\n\n${snippet}`;
+        const replyXml = buildReply(fromUser || 'unknown', toUser || 'unknown', debugReply);
+        res.setHeader('Content-Type', 'application/xml');
+        return res.status(200).send(replyXml);
       }
 
-      // 提取抖音链接
+      // 正常处理：提取抖音链接
       const douyinUrl = extractDouyinLink(content);
       let replyText = '';
-
       if (!douyinUrl) {
         replyText = '请发送抖音分享链接，例如：https://v.douyin.com/xxxxx/';
       } else {
@@ -123,11 +112,9 @@ module.exports = async (req, res) => {
           const parsed = await parseDouyin(douyinUrl);
           replyText = formatResult(parsed);
         } catch (err) {
-          console.error('API错误:', err);
-          replyText = `解析失败：${err.message}\n请检查链接是否正确。`;
+          replyText = `解析失败：${err.message}`;
         }
       }
-
       const replyXml = buildReply(fromUser, toUser, replyText);
       res.setHeader('Content-Type', 'application/xml');
       return res.status(200).send(replyXml);
