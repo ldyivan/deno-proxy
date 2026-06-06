@@ -1,8 +1,24 @@
-// api/wx.js - 调试增强版（无文本内容时返回原始XML片段）
+// api/wx.js - 从流中读取请求体，绝对可靠
 const crypto = require('crypto');
 
 const TOKEN = process.env.WX_TOKEN;
 const API_URL = 'http://api.hzv5.cn/dysp.php';
+
+// 从请求流中读取原始数据（解决 Vercel 中 req.body 为空的问题）
+function getRawBodyFromReq(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', chunk => {
+      data += chunk;
+    });
+    req.on('end', () => {
+      resolve(data);
+    });
+    req.on('error', err => {
+      reject(err);
+    });
+  });
+}
 
 function checkSignature(signature, timestamp, nonce) {
   const arr = [TOKEN, timestamp, nonce].sort();
@@ -10,19 +26,35 @@ function checkSignature(signature, timestamp, nonce) {
   return sha1 === signature;
 }
 
-function getRawBody(req) {
-  if (typeof req.body === 'string') return req.body;
-  if (Buffer.isBuffer(req.body)) return req.body.toString('utf-8');
-  return '';
-}
-
-function extractFromXML(xml, tag) {
-  const cdataPattern = new RegExp(`<${tag}>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*</${tag}>`);
-  let match = xml.match(cdataPattern);
-  if (match) return match[1];
-  const textPattern = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`);
-  match = xml.match(textPattern);
-  return match ? match[1].trim() : '';
+// 简单的字符串提取（不使用正则，避免各种匹配问题）
+function extractTag(xml, tag) {
+  const open = `<${tag}>`;
+  const close = `</${tag}>`;
+  let start = xml.indexOf(open);
+  if (start === -1) {
+    // 尝试带 CDATA 的格式：<tag><![CDATA[ ... ]]></tag>
+    const cdataOpen = `<${tag}>`;
+    start = xml.indexOf(cdataOpen);
+    if (start === -1) return '';
+    const cdataStart = xml.indexOf('<![CDATA[', start);
+    if (cdataStart === -1) return '';
+    const cdataEnd = xml.indexOf(']]>', cdataStart);
+    if (cdataEnd === -1) return '';
+    return xml.substring(cdataStart + 9, cdataEnd);
+  }
+  const end = xml.indexOf(close, start);
+  if (end === -1) return '';
+  let content = xml.substring(start + open.length, end);
+  // 如果内容被 CDATA 包裹，提取实际内容
+  if (content.trim().startsWith('<![CDATA[')) {
+    const inner = content.trim();
+    const innerStart = inner.indexOf('<![CDATA[') + 9;
+    const innerEnd = inner.indexOf(']]>', innerStart);
+    if (innerEnd !== -1) {
+      return inner.substring(innerStart, innerEnd);
+    }
+  }
+  return content.trim();
 }
 
 function extractDouyinLink(text) {
@@ -75,6 +107,7 @@ function buildReply(toUser, fromUser, content) {
 }
 
 module.exports = async (req, res) => {
+  // GET 验证
   if (req.method === 'GET') {
     const { signature, timestamp, nonce, echostr } = req.query;
     if (checkSignature(signature, timestamp, nonce)) {
@@ -83,26 +116,31 @@ module.exports = async (req, res) => {
     return res.status(401).send('Invalid signature');
   }
 
+  // POST 处理
   if (req.method === 'POST') {
     try {
-      const rawXml = getRawBody(req);
-      const fromUser = extractFromXML(rawXml, 'FromUserName');
-      const toUser = extractFromXML(rawXml, 'ToUserName');
-      const content = extractFromXML(rawXml, 'Content');
-      const msgType = extractFromXML(rawXml, 'MsgType');
-
-      console.log(`[调试] from=${fromUser}, msgType=${msgType}, content长度=${content ? content.length : 0}`);
-
-      // 如果没有提取到内容，则回复原始 XML 的前 500 个字符（调试用）
+      // 关键：从流中读取原始请求体（保证获取完整 XML）
+      const rawXml = await getRawBodyFromReq(req);
+      console.log('rawXml 长度:', rawXml.length);
+      
+      // 提取用户和内容
+      const fromUser = extractTag(rawXml, 'FromUserName');
+      const toUser = extractTag(rawXml, 'ToUserName');
+      let content = extractTag(rawXml, 'Content');
+      const msgType = extractTag(rawXml, 'MsgType');
+      
+      console.log(`提取: from=${fromUser}, msgType=${msgType}, content=${content}`);
+      
+      // 如果没有提取到内容，回复原始 XML 用于调试
       if (!content) {
-        const snippet = rawXml.substring(0, 500);
-        const debugReply = `【调试】未提取到文本内容。原始XML前500字符：\n\n${snippet}`;
-        const replyXml = buildReply(fromUser || 'unknown', toUser || 'unknown', debugReply);
+        const snippet = rawXml.substring(0, 800);
+        const debugMsg = `【调试】未提取到 Content。原始XML前800字符:\n${snippet}`;
+        const replyXml = buildReply(toUser || 'unknown', fromUser || 'unknown', debugMsg);
         res.setHeader('Content-Type', 'application/xml');
         return res.status(200).send(replyXml);
       }
-
-      // 正常处理：提取抖音链接
+      
+      // 正常业务逻辑
       const douyinUrl = extractDouyinLink(content);
       let replyText = '';
       if (!douyinUrl) {
@@ -112,6 +150,7 @@ module.exports = async (req, res) => {
           const parsed = await parseDouyin(douyinUrl);
           replyText = formatResult(parsed);
         } catch (err) {
+          console.error('API错误:', err);
           replyText = `解析失败：${err.message}`;
         }
       }
@@ -120,9 +159,10 @@ module.exports = async (req, res) => {
       return res.status(200).send(replyXml);
     } catch (err) {
       console.error('严重错误:', err);
+      // 返回空 success 避免微信重试
       return res.status(200).send('success');
     }
   }
-
+  
   res.status(405).send('Method Not Allowed');
 };
