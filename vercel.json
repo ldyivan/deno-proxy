@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/wx.js": {
+      "maxDuration": 10
+    }
+  }
+}
