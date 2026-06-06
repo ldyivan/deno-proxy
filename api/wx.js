@@ -3,7 +3,6 @@ const crypto = require('crypto');
 const TOKEN = process.env.WX_TOKEN;
 const API_URL = 'http://api.hzv5.cn/dysp.php';
 
-// 读取请求体（流）
 function getRawBodyFromReq(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -13,14 +12,12 @@ function getRawBodyFromReq(req) {
   });
 }
 
-// 微信签名验证
 function checkSignature(signature, timestamp, nonce) {
   const arr = [TOKEN, timestamp, nonce].sort();
   const sha1 = crypto.createHash('sha1').update(arr.join('')).digest('hex');
   return sha1 === signature;
 }
 
-// 从 XML 中提取标签内容
 function extractTag(xml, tag) {
   const cdataRegex = new RegExp(`<${tag}><\\!\\[CDATA\\[([\\s\\S]*?)\\]\\]></${tag}>`);
   let match = xml.match(cdataRegex);
@@ -30,15 +27,14 @@ function extractTag(xml, tag) {
   return match ? match[1].trim() : '';
 }
 
-// 提取抖音分享链接
+// 修正：支持短横线
 function extractDouyinLink(text) {
   if (!text) return null;
-  const regex = /https?:\/\/(v\.douyin\.com|iesdouyin\.com)\/[a-zA-Z0-9_]+\/?/;
+  const regex = /https?:\/\/(v\.douyin\.com|iesdouyin\.com)\/[a-zA-Z0-9_-]+\/?/;
   const match = text.match(regex);
   return match ? match[0] : null;
 }
 
-// 调用解析 API
 async function parseDouyin(shareUrl) {
   const url = `${API_URL}?url=${encodeURIComponent(shareUrl)}`;
   const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
@@ -48,7 +44,6 @@ async function parseDouyin(shareUrl) {
   return data.data;
 }
 
-// 辅助：提取图片链接数组（兼容数组或对象）
 function extractImageUrls(urlField) {
   if (!urlField) return [];
   if (Array.isArray(urlField)) return urlField;
@@ -56,34 +51,33 @@ function extractImageUrls(urlField) {
   return [urlField];
 }
 
-// 格式化回复（极简显示，节省篇幅）
+// 缩短标题
+function shortenTitle(title, maxLen = 10) {
+  if (!title) return '无标题';
+  if (title.length <= maxLen) return title;
+  return title.substring(0, maxLen) + '...';
+}
+
 function formatResult(data) {
-  const type = data.type;
+  const type = data.type; // "视频" 或 "图文"
   const author = data.author || '未知';
-  const title = data.title || '无标题';
+  const title = shortenTitle(data.title);
   const like = data.like || 0;
 
   let lines = [
-    `作者：${author}`,
-    `标题：${title}`,
-    `点赞：${like}`
+    `${author} | ${title} | ❤️${like}`
   ];
 
   if (type === '视频') {
-    const duration = data.duration ? `${Math.floor(data.duration / 1000)}秒` : '未知';
     const videoUrl = data.url;
-    lines.push(`类型：视频`);
-    lines.push(`时长：${duration}`);
-    lines.push(`<a href="${videoUrl}">▶ 点击播放视频</a>`);
+    lines.push(`<a href="${videoUrl}">观看视频</a>`);
   } 
   else if (type === '图文') {
     const urls = extractImageUrls(data.url);
     const num = data.num || urls.length;
-    lines.push(`类型：图文集`);
-    lines.push(`共 ${num} 张图片`);
-    // 每个图片只用“图片X”作为链接文本，不显示完整 URL
+    lines.push(`共${num}张`);
     urls.forEach((url, idx) => {
-      lines.push(`<a href="${url}">图片${idx+1}</a>`);
+      lines.push(`<a href="${url}">图${idx+1}</a>`);
     });
   } 
   else {
@@ -93,7 +87,6 @@ function formatResult(data) {
   return lines.join('\n');
 }
 
-// 构造回复 XML
 function buildReply(toUser, fromUser, content) {
   const timestamp = Math.floor(Date.now() / 1000);
   return `<xml>
@@ -120,7 +113,7 @@ module.exports = async (req, res) => {
       const fromUser = extractTag(rawXml, 'FromUserName');
       const toUser = extractTag(rawXml, 'ToUserName');
       const content = extractTag(rawXml, 'Content');
-      
+
       if (!content) {
         return res.status(200).send('success');
       }
@@ -129,7 +122,7 @@ module.exports = async (req, res) => {
       let replyText = '';
 
       if (!douyinUrl) {
-        replyText = '请发送抖音分享链接，例如：https://v.douyin.com/xxxxx/';
+        replyText = ''; //'请发送抖音分享链接，例如：https://v.douyin.com/xxxxx/';
       } else {
         try {
           const parsed = await parseDouyin(douyinUrl);
