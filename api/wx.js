@@ -64,9 +64,9 @@ function formatResult(data) {
   const title = shortenTitle(data.title);
   const like = data.like || 0;
 
-  let lines = [
-    `${author} | ${title} | ❤️${like}`
-  ];
+  let lines = [];
+  lines.push(`作者：${author} 丨 点赞：${like}`);
+  lines.push(`标题：${title}`);
 
   if (type === '视频') {
     const videoUrl = data.url;
