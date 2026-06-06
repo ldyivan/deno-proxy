@@ -69,7 +69,7 @@ function formatResult(data) {
     const videoUrl = data.url;
     lines.push(`类型：视频`);
     lines.push(`时长：${duration}`);
-    lines.push(`视频链接：<a href="${videoUrl}">${videoUrl}</a>`);
+    lines.push(`视频链接：<a href="${videoUrl}">点击观看无水印视频</a>`);
   } 
   else if (type === '图文') {
     const urls = data.url;            // 图片链接数组
@@ -79,7 +79,7 @@ function formatResult(data) {
     if (urls && urls.length) {
       // 遍历所有图片，每个都生成 a 标签，不省略
       urls.forEach((url, idx) => {
-        lines.push(`图片${idx+1}：<a href="${url}">${url}</a>`);
+        lines.push(`图片${idx+1}：<a href="${url}">查看图片 . ${idx}</a>`);
       });
     }
   } 
