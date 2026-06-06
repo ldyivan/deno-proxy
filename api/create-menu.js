@@ -1,6 +1,4 @@
-// api/create-menu.js - 通过浏览器访问创建自定义菜单
-const fetch = require('node-fetch');
-
+// api/create-menu.js - 使用原生 fetch，无需 node-fetch
 const APPID = process.env.WX_APPID;
 const APPSECRET = process.env.WX_APPSECRET;
 const SECRET_KEY = process.env.MENU_SECRET;
@@ -10,42 +8,36 @@ async function getAccessToken() {
   const res = await fetch(url);
   const data = await res.json();
   if (!data.access_token) {
-    throw new Error(`获取access_token失败: ${data.errmsg}`);
+    throw new Error(`获取 access_token 失败: ${data.errmsg}`);
   }
   return data.access_token;
 }
 
 async function createMenu(accessToken) {
   // 菜单结构（请根据需求修改）
-  // api/create-menu.js
-// ... (获取 access_token 的代码保持不变) ...
-
-async function createMenu(accessToken) {
-    const menu = {
-        button: [
-            {
-                "name": "帮助中心",
-                "sub_button": [
-                    {
-                        "type": "click",
-                        "name": "使用帮助",
-                        "key": "help_usage"
-                    },
-                    {
-                        "type": "click",
-                        "name": "关于我们",
-                        "key": "help_about"
-                    }
-                ]
-            },
-            {
-                "type": "view",
-                "name": "官网",
-                "url": "https://weixin.qq.com"
-            }
+  const menu = {
+    button: [
+      {
+        name: "帮助中心",
+        sub_button: [
+          {
+            type: "click",
+            name: "使用帮助",
+            key: "help_usage"
+          },
+          {
+            type: "click",
+            name: "关于我们",
+            key: "help_about"
+          }
         ]
-    };
-    // ... (发送POST请求的代码保持不变) ...
+      },
+      {
+        type: "view",
+        name: "官网",
+        url: "https://your-website.com"   // 替换成你的网址
+      }
+    ]
   };
   const url = `https://api.weixin.qq.com/cgi-bin/menu/create?access_token=${accessToken}`;
   const res = await fetch(url, {
